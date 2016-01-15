@@ -12,6 +12,6 @@ addons:
 install:
   - git clone git://github.com/efficios/babeltrace.git
   - cd babeltrace
-  - ./bootstrap && ./configure --prefix=/usr && make && sudo make install
+  - ./bootstrap && ./configure --prefix=/usr --enable-python-bindings && make && sudo make install
 # command to run tests
 script: py.test
