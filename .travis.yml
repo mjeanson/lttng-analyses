@@ -2,7 +2,13 @@ language: python
 python:
   - "3.4"
   - "3.5"
-# command to install dependencies
+addons:
+  apt:
+    packages:
+    - libglib2.0-dev
+    - libpopt-dev
+    - swig2.0
+    - uuid-dev
 install:
   - git clone git://github.com/efficios/babeltrace.git
   - cd babeltrace
