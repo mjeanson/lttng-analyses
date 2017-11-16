@@ -30,6 +30,7 @@ class _PeriodData(PeriodData):
         self.period_begin_ts = None
         self.cpus = {}
         self.tids = {}
+        self.containers = {}
 
 
 class Cputop(Analysis):
@@ -39,6 +40,7 @@ class Cputop(Analysis):
             'sched_switch_per_cpu': self._process_sched_switch_per_cpu,
             'sched_switch_per_tid': self._process_sched_switch_per_tid,
             'prio_changed': self._process_prio_changed,
+            'create_container': self._process_create_container,
         }
 
         super().__init__(state, conf, notification_cbs)
@@ -81,8 +83,13 @@ class Cputop(Analysis):
             if proc.last_sched_ts is not None:
                 proc.total_cpu_time += self.last_event_ts - \
                     proc.last_sched_ts
+                proc.container.total_cpu_time += self.last_event_ts - \
+                    proc.last_sched_ts
 
             proc.compute_stats(duration)
+
+        for pid_ns, container in period_data.containers.items():
+            container.compute_stats(duration)
 
     def _process_sched_switch_per_cpu(self, period_data, **kwargs):
         timestamp = kwargs['timestamp']
@@ -114,6 +121,7 @@ class Cputop(Analysis):
         next_tid = kwargs['next_tid']
         next_comm = kwargs['next_comm']
         prev_comm = kwargs['prev_comm']
+        pid_ns = kwargs['pid_ns']
 
         if not self._filter_cpu(cpu_id):
             return
@@ -130,6 +138,12 @@ class Cputop(Analysis):
         if prev_proc.last_sched_ts is not None:
             prev_proc.total_cpu_time += timestamp - prev_proc.last_sched_ts
             prev_proc.last_sched_ts = None
+
+        if pid_ns != 0:
+            if pid_ns not in period_data.containers:
+                period_data.containers[pid_ns] = ContainerUsageStats(pid_ns)
+
+            prev_proc.container = period_data.containers[pid_ns]
 
         # Only filter on wakee_proc after finalizing the prev_proc
         # accounting
@@ -169,6 +183,20 @@ class Cputop(Analysis):
 
         period_data.tids[tid].update_prio(timestamp, prio)
 
+    def _process_create_container(self, period_data, **kwargs):
+        container_name = kwargs['container_name']
+        container_type = kwargs['container_type']
+        pid_ns = kwargs['pid_ns']
+
+        if pid_ns == 0:
+            return
+
+        if pid_ns not in period_data.containers:
+            period_data.containers[pid_ns] = ContainerUsageStats(pid_ns)
+
+        period_data.containers[pid_ns].name = container_name
+        period_data.containers[pid_ns].c_type = container_type
+
     def _filter_process(self, proc):
         # Exclude swapper
         if proc.tid == 0:
@@ -196,6 +224,27 @@ class CpuUsageStats():
         self.usage_percent = None
 
 
+class ContainerUsageStats():
+    def __init__(self, pid_ns):
+        self.pid_ns = pid_ns
+        # CPU Time and timestamp in nanoseconds (ns)
+        self.total_cpu_time = 0
+        self.usage_percent = None
+
+        self.name = ""
+        self.c_type = ""
+
+    def compute_stats(self, duration):
+        if duration != 0:
+            self.usage_percent = self.total_cpu_time * 100 / duration
+        else:
+            self.usage_percent = 0
+
+    def reset(self):
+        self.total_cpu_time = 0
+        self.usage_percent = None
+
+
 class ProcessCpuStats(stats.Process):
     def __init__(self, pid, tid, comm):
         super().__init__(pid, tid, comm)
@@ -206,9 +255,13 @@ class ProcessCpuStats(stats.Process):
         self.migrate_count = 0
         self.usage_percent = None
 
+        self.container = None
+
     def compute_stats(self, duration):
         if duration != 0:
             self.usage_percent = self.total_cpu_time * 100 / duration
+            if self.container is not None:
+                self.container.total_cpu_time += self.total_cpu_time
         else:
             self.usage_percent = 0
 

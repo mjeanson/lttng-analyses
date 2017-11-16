@@ -39,6 +39,18 @@ class Process():
         self.prev_tid = None
         self.last_wakeup = None
         self.last_waker = None
+        # Namespace info
+        self.vpid = None
+        self.vtid = None
+        self.pid_ns = None
+        self.pid_ns_level = -1
+
+
+class Container():
+    def __init__(self, pid_ns, container_type, container_name):
+        self.container_type = container_type
+        self.container_name = container_name
+        self.pid_ns = pid_ns
 
 
 class CPU():

@@ -63,7 +63,8 @@ class SchedStateProvider(sp.StateProvider):
             else:
                 self._state.tids[tid] = sv.Process(tid=tid)
 
-    def _sched_switch_per_tid(self, next_tid, next_comm, prev_tid):
+    def _sched_switch_per_tid(self, next_tid, next_comm, prev_tid,
+                              pid_ns):
         # Instantiate processes if new
         self._create_proc(prev_tid)
         self._create_proc(next_tid)
@@ -71,6 +72,10 @@ class SchedStateProvider(sp.StateProvider):
         next_proc = self._state.tids[next_tid]
         next_proc.comm = next_comm
         next_proc.prev_tid = prev_tid
+
+        # Set the pid namespace of the previous process
+        prev_proc = self._state.tids[prev_tid]
+        prev_proc.pid_ns = pid_ns
 
     def _check_prio_changed(self, timestamp, tid, prio):
         # Ignore swapper
@@ -93,9 +98,10 @@ class SchedStateProvider(sp.StateProvider):
         prev_tid = event['prev_tid']
         prev_prio = event['prev_prio']
         prev_comm = event['prev_comm']
+        pid_ns = event['pid_ns']
 
         self._sched_switch_per_cpu(cpu_id, next_tid)
-        self._sched_switch_per_tid(next_tid, next_comm, prev_tid)
+        self._sched_switch_per_tid(next_tid, next_comm, prev_tid, pid_ns)
         self._check_prio_changed(timestamp, prev_tid, prev_prio)
         self._check_prio_changed(timestamp, next_tid, next_prio)
 
@@ -113,6 +119,7 @@ class SchedStateProvider(sp.StateProvider):
             'wakee_proc': wakee_proc,
             'waker_proc': waker_proc,
             'prev_comm': prev_comm,
+            'pid_ns': pid_ns,
         }
 
         self._state.send_notification_cb('sched_switch_per_cpu', **cb_data)

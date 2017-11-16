@@ -37,6 +37,7 @@ class State:
         self.cpus = {}
         self.tids = {}
         self.disks = {}
+        self.containers = {}
         self.mm = MemoryManagement()
         self._notification_cbs = {}
         # State changes can be handled differently depending on

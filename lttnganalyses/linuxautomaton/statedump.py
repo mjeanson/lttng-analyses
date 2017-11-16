@@ -30,10 +30,16 @@ class StatedumpStateProvider(sp.StateProvider):
         cbs = {
             'lttng_statedump_process_state':
             self._process_lttng_statedump_process_state,
+            'lttng_statedump_process_pid_ns':
+            self._process_lttng_statedump_process_pid_ns,
             'lttng_statedump_file_descriptor':
             self._process_lttng_statedump_file_descriptor,
             'lttng_statedump_block_device':
-            self._process_lttng_statedump_block_device
+            self._process_lttng_statedump_block_device,
+            'lttng_statedump_container':
+            self._process_lttng_statedump_container,
+            'ust_container_statedump:lttng_statedump_container':
+            self._process_lttng_statedump_container,
         }
 
         super().__init__(state, cbs)
@@ -87,6 +93,33 @@ class StatedumpStateProvider(sp.StateProvider):
                                              proc=proc,
                                              parent_proc=parent)
 
+    def _process_lttng_statedump_process_pid_ns(self, event):
+        tid = event['tid']
+        vtid = event['vtid']
+        vpid = event['vpid']
+
+        ns_level = event['ns_level']
+        ns_inum = event['ns_inum']
+
+        # Add the highest level vpid and ns_inum to the Process object
+        if tid in self._state.tids:
+            if self._state.tids[tid].pid_ns_level > ns_level:
+                self._state.tids[tid].pid_ns_level = ns_level
+                self._state.tids[tid].pid_ns = ns_inum
+                self._state.tids[tid].vtid = vtid
+                self._state.tids[tid].vpid = vpid
+
+        # The namespace of tid 1 will always be the root namespace
+        if tid == 1:
+            if ns_inum not in self._state.containers:
+                self._state.containers[ns_inum] = sv.Container(ns_inum,
+                                                              "host",
+                                                              "[HOST]")
+                self._state.send_notification_cb('create_container',
+                                                 pid_ns=ns_inum,
+                                                 container_type="host",
+                                                 container_name="[HOST]")
+
     def _process_lttng_statedump_file_descriptor(self, event):
         pid = event['pid']
         fd = event['fd']
@@ -113,6 +146,20 @@ class StatedumpStateProvider(sp.StateProvider):
                                              parent_proc=proc,
                                              timestamp=event.timestamp,
                                              cpu_id=event['cpu_id'])
+
+    def _process_lttng_statedump_container(self, event):
+        container_type = event['container_type']
+        container_name = event['container_name']
+        pid_ns = event['pid_ns']
+
+        if pid_ns not in self._state.containers:
+            self._state.containers[pid_ns] = sv.Container(pid_ns,
+                                                          container_type,
+                                                          container_name)
+            self._state.send_notification_cb('create_container',
+                                             pid_ns=pid_ns,
+                                             container_type=container_type,
+                                             container_name=container_name)
 
     @staticmethod
     def _assign_fds_to_parent(proc, parent):

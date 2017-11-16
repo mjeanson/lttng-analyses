@@ -518,6 +518,41 @@ class Cpu(_DataObject):
         return self.id == other.id
 
 
+class Container(_DataObject):
+    CLASS = 'container'
+
+    def __init__(self, pid_ns, name=None, c_type=None):
+        self._pid_ns = pid_ns
+        self._name = name
+        self._c_type = c_type
+
+    @property
+    def pid_ns(self):
+        return self._pid_ns
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def c_type(self):
+        return self._c_type
+
+    def _to_native_object(self):
+        obj = {'pid_ns': self._pid_ns}
+
+        if self._name is not None:
+            obj['name'] = self._name
+
+        if self._c_type is not None:
+            obj['c_type'] = self._c_type
+
+        return obj
+
+    def _eq(self, other):
+        return self._pid_ns == other._pid_ns
+
+
 class Disk(_SimpleName):
     CLASS = 'disk'
 

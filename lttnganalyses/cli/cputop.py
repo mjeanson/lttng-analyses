@@ -34,10 +34,11 @@ class Cputop(Command):
     _DESC = """The cputop command."""
     _ANALYSIS_CLASS = cputop.Cputop
     _MI_TITLE = 'Top CPU usage'
-    _MI_DESCRIPTION = 'Per-TID, per-CPU, and total top CPU usage'
+    _MI_DESCRIPTION = 'Per-TID, per-CPU, per-Container, and total top CPU usage'
     _MI_TAGS = [mi.Tags.CPU, mi.Tags.TOP]
     _MI_TABLE_CLASS_PER_PROC = 'per-process'
     _MI_TABLE_CLASS_PER_CPU = 'per-cpu'
+    _MI_TABLE_CLASS_PER_CONTAINER = 'per-container'
     _MI_TABLE_CLASS_TOTAL = 'total'
     _MI_TABLE_CLASS_SUMMARY = 'summary'
     _MI_TABLE_CLASSES = [
@@ -54,6 +55,12 @@ class Cputop(Command):
             _MI_TABLE_CLASS_PER_CPU,
             'Per-CPU top CPU usage', [
                 ('cpu', 'CPU', mi.Cpu),
+                ('usage', 'CPU usage', mi.Ratio),
+            ]),
+        (
+            _MI_TABLE_CLASS_PER_CONTAINER,
+            'Per-Container top CPU usage', [
+                ('container', 'Container', mi.Container),
                 ('usage', 'CPU usage', mi.Ratio),
             ]),
         (
@@ -80,17 +87,21 @@ class Cputop(Command):
                                                              begin_ns, end_ns)
         per_cpu_table = self._get_per_cpu_usage_result_table(period_data,
                                                              begin_ns, end_ns)
+        per_container_table = self._get_per_container_usage_result_table(period_data,
+                                                             begin_ns, end_ns)
         total_table = self._get_total_usage_result_table(period_data, begin_ns,
                                                          end_ns)
 
         if self._mi_mode:
             self._mi_append_result_table(per_tid_table)
             self._mi_append_result_table(per_cpu_table)
+            self._mi_append_result_table(per_container_table)
             self._mi_append_result_table(total_table)
         else:
             self._print_date(begin_ns, end_ns)
             self._print_per_tid_usage(per_tid_table)
             self._print_per_cpu_usage(per_cpu_table)
+            self._print_per_container_usage(per_container_table)
 
             if total_table:
                 self._print_total_cpu_usage(total_table)
@@ -151,6 +162,21 @@ class Cputop(Command):
 
         return result_table
 
+    def _get_per_container_usage_result_table(self, period_data, begin_ns,
+                                              end_ns):
+        result_table = \
+            self._mi_create_result_table(self._MI_TABLE_CLASS_PER_CONTAINER,
+                                         begin_ns, end_ns)
+
+        for container in sorted(period_data.containers.values(),
+                                key=operator.attrgetter('pid_ns')):
+            result_table.append_row(
+                container=mi.Container(container.pid_ns, container.name, container.c_type),
+                usage=mi.Ratio.from_percentage(container.usage_percent)
+            )
+
+        return result_table
+
     def _get_total_usage_result_table(self, period_data, begin_ns, end_ns):
         result_table = \
             self._mi_create_result_table(self._MI_TABLE_CLASS_TOTAL,
@@ -203,6 +229,27 @@ class Cputop(Command):
             unit='%',
             get_value=lambda row: row.usage.to_percentage(),
             get_label=lambda row: 'CPU %d' % row.cpu.id,
+            data=result_table.rows
+        )
+
+        graph.print_graph()
+
+    def _print_per_container_usage(self, result_table):
+        row_format = '  {:<45} {:<10}'
+        label_header = row_format.format('Container', 'Type')
+
+        def format_label(row):
+            return row_format.format(
+                '%s (%d)' % (row.container.name, row.container.pid_ns),
+                row.container.c_type,
+            )
+
+        graph = termgraph.BarGraph(
+            title='Per-Container Usage',
+            unit='%',
+            get_value=lambda row: row.usage.to_percentage(),
+            get_label=format_label,
+            label_header=label_header,
             data=result_table.rows
         )
 
