@@ -33,10 +33,12 @@ class Memtop(Command):
     _DESC = """The memtop command."""
     _ANALYSIS_CLASS = memtop.Memtop
     _MI_TITLE = 'Top memory usage'
-    _MI_DESCRIPTION = 'Per-TID top allocated/freed memory'
+    _MI_DESCRIPTION = 'Per-TID and per-container top allocated/freed memory'
     _MI_TAGS = [mi.Tags.MEMORY, mi.Tags.TOP]
     _MI_TABLE_CLASS_ALLOCD = 'allocd'
     _MI_TABLE_CLASS_FREED = 'freed'
+    _MI_TABLE_CLASS_PER_CONTAINER_ALLOCD = 'per-container-allocd'
+    _MI_TABLE_CLASS_PER_CONTAINER_FREED = 'per-container-freed'
     _MI_TABLE_CLASS_TOTAL = 'total'
     _MI_TABLE_CLASS_SUMMARY = 'summary'
     _MI_TABLE_CLASSES = [
@@ -51,6 +53,20 @@ class Memtop(Command):
             _MI_TABLE_CLASS_FREED,
             'Per-TID top freed memory', [
                 ('process', 'Process', mi.Process),
+                ('pages', 'Freed pages', mi.Number, 'pages'),
+            ]
+        ),
+        (
+            _MI_TABLE_CLASS_PER_CONTAINER_ALLOCD,
+            'Per-Container top allocated memory', [
+                ('container', 'Container', mi.Container),
+                ('pages', 'Allocated pages', mi.Number, 'pages'),
+            ]
+        ),
+        (
+            _MI_TABLE_CLASS_PER_CONTAINER_FREED,
+            'Per-Container top freed memory', [
+                ('container', 'Container', mi.Container),
                 ('pages', 'Freed pages', mi.Number, 'pages'),
             ]
         ),
@@ -80,17 +96,25 @@ class Memtop(Command):
                                                              begin_ns, end_ns)
         freed_table = self._get_per_tid_freed_result_table(period_data,
                                                            begin_ns, end_ns)
+        per_container_allocd_table = self._get_per_container_allocd_result_table(period_data,
+                                                             begin_ns, end_ns)
+        per_container_freed_table = self._get_per_container_freed_result_table(period_data,
+                                                           begin_ns, end_ns)
         total_table = self._get_total_result_table(period_data,
                                                    begin_ns, end_ns)
 
         if self._mi_mode:
             self._mi_append_result_table(allocd_table)
             self._mi_append_result_table(freed_table)
+            self._mi_append_result_table(per_container_allocd_table)
+            self._mi_append_result_table(per_container_freed_table)
             self._mi_append_result_table(total_table)
         else:
             self._print_date(begin_ns, end_ns)
             self._print_per_tid_allocd(allocd_table)
             self._print_per_tid_freed(freed_table)
+            self._print_per_container_allocd(per_container_allocd_table)
+            self._print_per_container_freed(per_container_freed_table)
             self._print_total(total_table)
 
     def _create_summary_result_tables(self):
@@ -145,6 +169,38 @@ class Memtop(Command):
                                                    'freed_pages',
                                                    begin_ns, end_ns)
 
+    def _get_per_container_attr_result_table(self, period_data, table_class, attr,
+                                       begin_ns, end_ns):
+        result_table = self._mi_create_result_table(table_class,
+                                                    begin_ns, end_ns)
+        count = 0
+
+        for container in sorted(period_data.containers.values(),
+                          key=operator.attrgetter('pid_ns'),
+                          reverse=True):
+            result_table.append_row(
+                container=mi.Container(container.pid_ns, container.name, container.c_type),
+                pages=mi.Number(getattr(container, attr)),
+            )
+            count += 1
+
+            if self._args.limit > 0 and count >= self._args.limit:
+                break
+
+        return result_table
+
+    def _get_per_container_allocd_result_table(self, period_data, begin_ns, end_ns):
+        return self._get_per_container_attr_result_table(period_data,
+                                                   self._MI_TABLE_CLASS_PER_CONTAINER_ALLOCD,
+                                                   'allocated_pages',
+                                                   begin_ns, end_ns)
+
+    def _get_per_container_freed_result_table(self, period_data, begin_ns, end_ns):
+        return self._get_per_container_attr_result_table(period_data,
+                                                   self._MI_TABLE_CLASS_PER_CONTAINER_FREED,
+                                                   'freed_pages',
+                                                   begin_ns, end_ns)
+
     def _get_total_result_table(self, period_data, begin_ns, end_ns):
         result_table = self._mi_create_result_table(self._MI_TABLE_CLASS_TOTAL,
                                                     begin_ns, end_ns)
@@ -181,6 +237,34 @@ class Memtop(Command):
     def _print_per_tid_freed(self, result_table):
         self._print_per_tid_result(result_table,
                                    'Per-TID Memory Deallocations')
+
+    def _print_per_container_result(self, result_table, title):
+        row_format = '  {:<45} {:<10}'
+        label_header = row_format.format('Container', 'Type')
+
+        def format_label(row):
+            return row_format.format(
+                '%s (%d)' % (row.container.name, row.container.pid_ns),
+                row.container.c_type,
+            )
+
+        graph = termgraph.BarGraph(
+            title=title,
+            unit='pages',
+            get_value=lambda row: row.pages.value,
+            get_label=format_label,
+            label_header=label_header,
+            data=result_table.rows
+        )
+
+        graph.print_graph()
+
+    def _print_per_container_allocd(self, result_table):
+        self._print_per_container_result(result_table, 'Per-Container Memory Allocations')
+
+    def _print_per_container_freed(self, result_table):
+        self._print_per_container_result(result_table,
+                                   'Per-Container Memory Deallocations')
 
     def _print_total(self, result_table):
         alloc = result_table.rows[0].allocd.value

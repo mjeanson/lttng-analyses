@@ -27,13 +27,15 @@ from .analysis import Analysis, PeriodData
 class _PeriodData(PeriodData):
     def __init__(self):
         self.tids = {}
+        self.containers = {}
 
 
 class Memtop(Analysis):
     def __init__(self, state, conf):
         notification_cbs = {
             'tid_page_alloc': self._process_tid_page_alloc,
-            'tid_page_free': self._process_tid_page_free
+            'tid_page_free': self._process_tid_page_free,
+            'create_container': self._process_create_container,
         }
         super().__init__(state, conf, notification_cbs)
 
@@ -43,6 +45,7 @@ class Memtop(Analysis):
     def _process_tid_page_alloc(self, period_data, **kwargs):
         cpu_id = kwargs['cpu_id']
         proc = kwargs['proc']
+        pid_ns = kwargs['pid_ns']
 
         if not self._filter_process(proc):
             return
@@ -55,9 +58,17 @@ class Memtop(Analysis):
 
         period_data.tids[tid].allocated_pages += 1
 
+        if pid_ns != 0:
+            if pid_ns not in period_data.containers:
+                period_data.containers[pid_ns] = ContainerMemStats(pid_ns)
+
+            period_data.tids[tid].container = period_data.containers[pid_ns]
+            period_data.containers[pid_ns].allocated_pages += 1
+
     def _process_tid_page_free(self, period_data, **kwargs):
         cpu_id = kwargs['cpu_id']
         proc = kwargs['proc']
+        pid_ns = kwargs['pid_ns']
 
         if not self._filter_process(proc):
             return
@@ -70,10 +81,33 @@ class Memtop(Analysis):
 
         period_data.tids[tid].freed_pages += 1
 
+        if pid_ns != 0:
+            if pid_ns not in period_data.containers:
+                period_data.containers[pid_ns] = ContainerMemStats(pid_ns)
+
+            period_data.tids[tid].container = period_data.containers[pid_ns]
+            period_data.containers[pid_ns].freed_pages += 1
+
+    def _process_create_container(self, period_data, **kwargs):
+        container_name = kwargs['container_name']
+        container_type = kwargs['container_type']
+        pid_ns = kwargs['pid_ns']
+
+        if pid_ns == 0:
+            return
+
+        if pid_ns not in period_data.containers:
+            period_data.containers[pid_ns] = ContainerMemStats(pid_ns)
+
+        period_data.containers[pid_ns].name = container_name
+        period_data.containers[pid_ns].c_type = container_type
+
 
 class ProcessMemStats(stats.Process):
     def __init__(self, pid, tid, comm):
         super().__init__(pid, tid, comm)
+
+        self.container = None
 
         self.allocated_pages = 0
         self.freed_pages = 0
@@ -81,3 +115,18 @@ class ProcessMemStats(stats.Process):
     def reset(self):
         self.allocated_pages = 0
         self.freed_pages = 0
+
+class ContainerMemStats():
+    def __init__(self, pid_ns):
+        self.pid_ns = pid_ns
+
+        self.name = ""
+        self.c_type = ""
+
+        self.allocated_pages = 0
+        self.freed_pages = 0
+
+    def reset(self):
+        self.allocated_pages = 0
+        self.freed_pages = 0
+
